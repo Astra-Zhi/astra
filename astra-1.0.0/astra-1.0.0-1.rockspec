@@ -1,8 +1,8 @@
 package = "astra"
-version = "1.0.0-dev-1"
+version = "1.0.0-1"
 source = {
    url = "git+https://github.com/Astra-Zhi/astra.git",
-   tag = "v1.0.0-dev-1" 
+   tag = "v1.0.0-1" 
 }
 description = {
    summary = "A statistical computation library for Lua",
