@@ -23,7 +23,7 @@ end
 --- 用于直接输出信息的函数
 -- @param ... 变长参数，可以是任意类型的值
 -- @return 无返回值，但在控制台打印出格式化的输出
-function astra.show(...)
+function astra.Show(...)
     local function print_table(tbl, indent)
         indent = indent or 0
         local indent_str = string.rep("  ", indent)
@@ -63,13 +63,298 @@ local function round_helper(x, n, base_func)
     return base_func(x * factor + 0.5) / factor
 end
 
+-----------------------------------------------------------------------------------
+-- 模块: Factor() 数据处理工具
+
+--- 创建一个因子对象，用于编码分类数据。
+-- @param data 表，包含要编码的数据
+-- @return 因子对象，包含编码后的数据和水平（levels）
+function astra.Factor(data)
+    if not data or type(data) ~= "table" then
+        error("Data must be a table.")
+    end
+
+    local factor = {
+        levels = {},
+        level_map = {}
+    }
+
+    -- 确定因子的水平
+    for _, value in pairs(data) do
+        if not factor.level_map[value] then
+            table.insert(factor.levels, value)
+            factor.level_map[value] = #factor.levels
+        end
+    end
+
+    -- 为因子添加编码后的数据
+    factor.encoded_data = {}
+    for _, value in pairs(data) do
+        table.insert(factor.encoded_data, factor.level_map[value])
+    end
+
+    return factor
+end
+
+--- 模块： Array()函数
+-- @param dims 表，包含每个维度的大小（2D或3D）
+-- @param startValue 数值，填充数组的起始值
+-- @param endValue 数值，填充数组的结束值
+-- @param loop 布尔值，指示是否循环回开始值
+-- @return 多维数组
+
+function astra.Array(dims, startValue, endValue, loop)
+    -- 参数校验
+    if not (dims and type(dims) == "table" and #dims >= 2 and #dims <= 3) then
+        error("Dimensions must be a table with 2 or 3 positive integer elements")
+    end
+ 
+    for i = 1, #dims do
+        if type(dims[i]) ~= "number" or dims[i] <= 0 then
+            error("All dimensions must be positive integers")
+        end
+    end
+ 
+    if startValue > endValue then
+        error("Start value cannot be greater than end value")
+    end
+ 
+    local totalElements = 1
+    for _, v in ipairs(dims) do
+        totalElements = totalElements * v
+    end
+ 
+    local valueRange = endValue - startValue + 1
+    if valueRange < totalElements and not loop then
+        error("The range of values is smaller than the number of elements to fill, and loop is disabled.")
+    end
+ 
+    -- 全局计数器
+    local counter = startValue - 1
+
+    -- 递归填充函数
+    local function fillArray(index, arr)
+        if index > #dims then
+            return
+        end
+ 
+        local currentDim = dims[index]
+        for i = 1, currentDim do
+            if index == #dims then
+                -- 最内层，填充值
+                counter = counter + 1
+                if not loop and counter > endValue then
+                    error("Exceeded the end value without looping")
+                elseif loop then
+                    counter = (counter - startValue) % valueRange + startValue
+                end
+                table.insert(arr, counter)
+            else
+                -- 创建下一层
+                local newArray = {}
+                table.insert(arr, newArray)
+                fillArray(index + 1, newArray)
+            end
+        end
+    end
+
+    -- 爱你小猫
+
+    local array = {}
+    fillArray(1, array)
+ 
+    -- 确保返回多维数组
+    return array
+end
+
+
+--- 模块：Matrix()函数
+-- @param rows 整数，矩阵的行数
+-- @param cols 整数，矩阵的列数
+-- @param initValue 任意类型，初始化每个元素的值
+-- @return 二维矩阵
+function astra.Matrix(rows, cols, initValue)
+    if type(rows) ~= "number" or rows <= 0 or type(cols) ~= "number" or cols <= 0 then
+        error("Rows and columns must be positive integers.")
+    end
+
+    local matrix = {}
+    for i = 1, rows do
+        matrix[i] = {}
+        for j = 1, cols do
+            matrix[i][j] = initValue
+        end
+    end
+    return matrix
+end
+
+-----------------------------------------------------------------------------------
+-- 模块: 数据框工具
+
+--- 创建一个数据框对象。
+-- @param columns 表，键是列名，值是列数据
+-- @return 数据框对象
+function astra.DataFrame(columns)
+    local dataFrame = {}
+    local null = nil  -- 定义null为nil，如果你有特定的null定义可以替换
+
+    -- 自定义有效性检查函数
+    local function is_valid(value, validTypes)
+        validTypes = validTypes or {"number", "string", "boolean"}
+        for _, t in ipairs(validTypes) do
+            if t == type(value) then
+                return true
+            end
+        end
+        return false
+    end
+    
+    -- 初始化数据框，columns是一个表，其中键是列名，值是列数据
+    local expectedLength = nil
+    for columnName, columnData in pairs(columns) do
+        -- 确保columnData是一个表
+        if type(columnData) ~= "table" then
+            error("Column data must be a table for column '" .. tostring(columnName) .. "'.")
+        end
+
+        -- 检查所有列长度一致
+        local columnLength = #columnData
+        if expectedLength == nil then
+            -- 如果是第一列，初始化行数
+            expectedLength = columnLength
+            dataFrame.numRows = columnLength
+        elseif columnLength ~= expectedLength then
+            error("All columns must have the same length. Column '" .. tostring(columnName) .. "' has length " .. columnLength .. ", but expected " .. expectedLength .. ".")
+        end
+
+        -- 验证并填充无效数据
+        dataFrame[columnName] = columnData  -- 直接使用原始数据
+        for i = 1, expectedLength do
+            if columnData[i] == nil or not is_valid(columnData[i]) then
+                columnData[i] = null  -- 将无效值替换为null
+            end
+        end
+    end
+
+    -- 存储行数，方便后续使用
+    dataFrame.numRows = dataFrame.numRows or 0
+
+    -- 定义__tostring元方法，用于print函数输出
+    setmetatable(dataFrame, {
+        __tostring = function(self)
+            local result = {}
+
+            -- 收集列名
+            local columnNames = {}
+            for columnName in pairs(self) do
+                if type(columnName) == "string" and columnName ~= "numRows" then
+                    table.insert(columnNames, columnName)
+                end
+            end
+
+            -- 按列名排序（可选）
+            table.sort(columnNames)
+
+            -- 构建表头
+            table.insert(result, table.concat(columnNames, "\t"))
+
+            -- 构建每一行
+            for row = 1, self.numRows do
+                local rowData = {}
+                for _, name in ipairs(columnNames) do
+                    -- 使用tostring转换值，对于nil显示为"null"
+                    local value = self[name][row]
+                    table.insert(rowData, value == null and "null" or tostring(value))
+                end
+                table.insert(result, table.concat(rowData, "\t"))
+            end
+
+            -- 调试输出
+            for _, line in ipairs(result) do
+                print("DEBUG: " .. line)
+            end
+
+            return table.concat(result, "\n")
+        end
+    })
+
+    return dataFrame
+end
+
+-----------------------------------------------------------------------------------
+-- 模块: 列表工具
+
+--- 创建一个列表对象。
+-- @param ... 变长参数，可以是单个值或一个表
+-- @return 列表对象
+function astra.List(...)
+    local list = {}
+    local args = {...}
+    for _, arg in ipairs(args) do
+        if type(arg) == "table" then
+            for _, value in ipairs(arg) do
+                table.insert(list, value)
+            end
+        else
+            table.insert(list, arg)
+        end
+    end
+    return list
+end
+
+-----------------------------------------------------------------------------------
+-- 模块: 管道操作符工具
+
+--- 创建一个管道对象。
+-- @param value 初始值
+-- @param ... 可选的函数列表，立即执行这些函数
+-- @return 管道对象或最终结果
+function astra.Pipe(value, ...)
+    local funcs = {...}
+
+    -- 创建管道对象
+    local p = setmetatable({value = value}, {
+        __call = function(self, func, ...)
+            -- 检查func是否为函数
+            if type(func) ~= "function" then
+                error("Expected a function, got " .. type(func))
+            end
+
+            -- 将当前值作为第一个参数传递给func，并更新self.value
+            self.value = func(self.value, ...)
+            return self  -- 返回管道对象，以便链式调用
+        end,
+        __tostring = function(self)
+            return tostring(self.value)
+        end,
+        -- 添加一个方法来获取当前值
+        __index = {
+            get = function(self)
+                return self.value
+            end
+        }
+    })
+
+    -- 如果有额外的函数传入，则执行管道操作
+    if #funcs > 0 then
+        for _, func in ipairs(funcs) do
+            p(func)  -- 直接调用 p 以触发 __call metamethod
+        end
+        return p:get()  -- 返回最终结果
+    end
+
+    -- 如果没有额外的函数传入，返回管道对象
+    return p
+end
+
 
 -----------------------------------------------------------------------------------
 -- 模块: Summary()函数模块
 --- 计算一个数值数组的最小值（Min）、第一四分位数（1st Qu.）、中位数（Median）、平均值（Mean）、第三四分位数（3rd Qu.）和最大值（Max）
 -- @param data 数值数组，包含要分析的数据点
 -- @return 无返回值，但在控制台打印出统计摘要
-function astra.Summary(data)
+-- 计算统计数据的辅助函数
+local function calculate_statistics(data)
     if not data or #data == 0 then
         error("Input data is empty or nil")
     end
@@ -101,14 +386,14 @@ function astra.Summary(data)
             return sorted_data[1]  -- 特殊处理单元素数组
         end
 
-        local pos = q * (n + 1)
+        local pos = q * (n - 1) + 1
         local lower = math.floor(pos)
         local upper = math.ceil(pos)
         if lower == upper then
             return sorted_data[lower]
         else
-            local lower_value = sorted_data[lower] or 0
-            local upper_value = sorted_data[upper] or lower_value
+            local lower_value = sorted_data[math.max(1, lower)] or 0
+            local upper_value = sorted_data[math.min(n, upper)] or lower_value
             return lower_value + (pos - lower) * (upper_value - lower_value)
         end
     end
@@ -117,10 +402,27 @@ function astra.Summary(data)
     local first_quartile = quartile(0.25)
     local third_quartile = quartile(0.75)
 
-    -- 打印统计摘要，格式类似于 R 的 output
-    print(string.format("%7s %7s %7s %7s %7s %7s", "Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max."))
-    print(string.format("%7.1f %7.1f %7.1f %7.1f %7.1f %7.1f", 
-                        min_val, first_quartile, median_val, mean_val, third_quartile, max_val))
+    return {
+        Min = min_val,
+        ["1st Qu."] = first_quartile,
+        Median = median_val,
+        Mean = mean_val,
+        ["3rd Qu."] = third_quartile,
+        Max = max_val
+    }
+end
+
+function astra.Summary(data, print_output)
+    local stats = calculate_statistics(data)
+
+    if print_output ~= false then
+        -- 打印统计摘要，格式类似于 R 的 output
+        print(string.format("%7s %7s %7s %7s %7s %7s", "Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max."))
+        print(string.format("%7.1f %7.1f %7.1f %7.1f %7.1f %7.1f",
+                            stats.Min, stats["1st Qu."], stats.Median, stats.Mean, stats["3rd Qu."], stats.Max))
+    end
+
+    return stats
 end
 
 -----------------------------------------------------------------------------------
@@ -136,13 +438,13 @@ function astra.Which(condition, data)
     local indices = {}
     if type(condition) == "function" then
         for i, v in ipairs(data) do
-            if condition(v) then
+            if v ~= nil and condition(v) then
                 table.insert(indices, i)
             end
         end
     elseif type(condition) == "table" then
         for i, v in ipairs(data) do
-            if condition[i] then
+            if condition[i] == true then
                 table.insert(indices, i)
             end
         end
@@ -239,8 +541,17 @@ end
 -- @param value 数值或包含数值的表
 -- @return 向0的方向为X取整或包含向0的方向为X取整的新表
 function astra.Trunc(value)
-    local trunc_func = math.tointeger or function(x) return x >= 0 and math.floor(x) or math.ceil(x) end
-    return apply_to_elements(trunc_func, value)
+    if type(value) == "table" then
+        local result = {}
+        for i, v in ipairs(value) do
+            result[i] = astra.Trunc(v)
+        end
+        return result
+    elseif type(value) == "number" then
+        return value >= 0 and math.floor(value) or math.ceil(value)
+    else
+        return value
+    end
 end
 
 -----------------------------------------------------------------------------------
@@ -468,7 +779,12 @@ end
 -- @param ... 一个或多个分位数（0 到 1 之间的数值）
 -- @return 分位数的结果
 function astra.Quantile(value, ...)
-    local sorted = filter_numbers(value)
+    local sorted = {}
+    for _, v in ipairs(value) do
+        if type(v) == "number" then
+            table.insert(sorted, v)
+        end
+    end
     if #sorted == 0 then return nil end
     table.sort(sorted)
 
@@ -487,8 +803,8 @@ function astra.Quantile(value, ...)
         if lower == upper then
             table.insert(results, sorted[lower])
         else
-            local lower_value = sorted[lower] or 0
-            local upper_value = sorted[upper] or lower_value
+            local lower_value = sorted[math.max(1, lower)] or 0
+            local upper_value = sorted[math.min(#sorted, upper)] or lower_value
             table.insert(results, lower_value + (index - lower) * (upper_value - lower_value))
         end
     end
